@@ -370,18 +370,16 @@ public class RNFirebaseStorage extends ReactContextBaseJavaModule {
                   }
 
                   Log.d(TAG, "putFile success " + snapshot);
-                  WritableMap respChanged = getUploadTaskAsMap(snapshot);
-                  String downloadURL = task.getResult().toString();
-                  respChanged.putString("downloadURL", downloadURL);
+                  String downloadUrl = task.getResult().toString();
+
+                  WritableMap respChanged = getUploadTaskAsMap(snapshot, downloadUrl);
                   sendJSEvent(appName, STORAGE_STATE_CHANGED, path, respChanged);
 
                   // to avoid readable map already consumed errors
-                  WritableMap respSuccess = getUploadTaskAsMap(snapshot);
-                  respSuccess.putString("downloadURL", downloadURL);
+                  WritableMap respSuccess = getUploadTaskAsMap(snapshot, downloadUrl);
                   sendJSEvent(appName, STORAGE_UPLOAD_SUCCESS, path, respSuccess);
 
-                  WritableMap resp = getUploadTaskAsMap(snapshot);
-                  resp.putString("downloadURL", downloadURL);
+                  WritableMap resp = getUploadTaskAsMap(snapshot, downloadUrl);
                   promise.resolve(resp);
 
                   return null;
@@ -395,14 +393,14 @@ public class RNFirebaseStorage extends ReactContextBaseJavaModule {
           @Override
           public void onProgress(UploadTask.TaskSnapshot taskSnapshot) {
             Log.d(TAG, "putFile progress " + taskSnapshot);
-            sendJSEvent(appName, STORAGE_STATE_CHANGED, path, getUploadTaskAsMap(taskSnapshot));
+            sendJSEvent(appName, STORAGE_STATE_CHANGED, path, getUploadTaskAsMap(taskSnapshot, ""));
           }
         })
         .addOnPausedListener(new OnPausedListener<UploadTask.TaskSnapshot>() {
           @Override
           public void onPaused(UploadTask.TaskSnapshot taskSnapshot) {
             Log.d(TAG, "putFile paused " + taskSnapshot);
-            WritableMap event = getUploadTaskAsMap(taskSnapshot);
+            WritableMap event = getUploadTaskAsMap(taskSnapshot, "");
             sendJSEvent(appName, STORAGE_STATE_CHANGED, path, event);
           }
         });
