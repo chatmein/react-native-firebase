@@ -7,7 +7,6 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -16,7 +15,6 @@ import android.support.annotation.NonNull;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Promise;
-import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableMap;
@@ -26,6 +24,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.google.android.gms.tasks.Task;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.tasks.Continuation;
 
 import com.google.firebase.FirebaseApp;
 import com.google.firebase.storage.UploadTask;
@@ -332,7 +331,7 @@ public class RNFirebaseStorage extends ReactContextBaseJavaModule {
    */
   @ReactMethod
   public void putFile(final String appName, final String path, final String localPath, final ReadableMap metadata, final Promise promise) {
-    StorageReference reference = this.getReference(path, appName);
+    final StorageReference reference = this.getReference(path, appName);
 
     Log.i(TAG, "putFile: " + localPath + " to " + path);
 
@@ -343,30 +342,55 @@ public class RNFirebaseStorage extends ReactContextBaseJavaModule {
 
       // register observers to listen for when the download is done or if it fails
       uploadTask
-        .addOnFailureListener(new OnFailureListener() {
+        .continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
           @Override
-          public void onFailure(@NonNull Exception exception) {
-            // handle unsuccessful uploads
-            Log.e(TAG, "putFile failure " + exception.getMessage());
-            // TODO sendJS error event
-            promiseRejectStorageException(promise, exception);
-          }
-        })
-        .addOnSuccessListener(new OnSuccessListener<UploadTask.TaskSnapshot>() {
-          @Override
-          public void onSuccess(UploadTask.TaskSnapshot taskSnapshot) {
-            Log.d(TAG, "putFile success " + taskSnapshot);
-            WritableMap resp = getUploadTaskAsMap(taskSnapshot);
-            sendJSEvent(appName, STORAGE_STATE_CHANGED, path, resp);
+          public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> taskSnapshot) throws Exception {
+            // Forward any exceptions
+            if (!taskSnapshot.isSuccessful()) {
+              Exception exception = taskSnapshot.getException();
+              Log.e(TAG, "putFile failure " + exception.getMessage());
+              // TODO sendJS error event
+              throw exception;
+            }
 
-            // to avoid readable map already consumed errors
-            resp = getUploadTaskAsMap(taskSnapshot);
-            sendJSEvent(appName, STORAGE_UPLOAD_SUCCESS, path, resp);
+            Log.d(TAG, "uploadFromUri: upload success");
 
-            resp = getUploadTaskAsMap(taskSnapshot);
-            promise.resolve(resp);
+            final UploadTask.TaskSnapshot snapshot = taskSnapshot.getResult();
+
+            // Request the public download URL
+            return reference.getDownloadUrl()
+              .continueWithTask(new Continuation<Uri, Task<Uri>>() {
+                @Override
+                public Task<Uri> then(@NonNull Task<Uri> task) throws Exception {
+
+                  if (!task.isSuccessful()) {
+                    Exception exception = task.getException();
+                    Log.e(TAG, "putFile failure " + exception.getMessage());
+                    throw exception;
+                  }
+
+                  Log.d(TAG, "putFile success " + snapshot);
+                  WritableMap respChanged = getUploadTaskAsMap(snapshot);
+                  String downloadURL = task.getResult().toString();
+                  respChanged.putString("downloadURL", downloadURL);
+                  sendJSEvent(appName, STORAGE_STATE_CHANGED, path, respChanged);
+
+                  // to avoid readable map already consumed errors
+                  WritableMap respSuccess = getUploadTaskAsMap(snapshot);
+                  respSuccess.putString("downloadURL", downloadURL);
+                  sendJSEvent(appName, STORAGE_UPLOAD_SUCCESS, path, respSuccess);
+
+                  WritableMap resp = getUploadTaskAsMap(snapshot);
+                  resp.putString("downloadURL", downloadURL);
+                  promise.resolve(resp);
+
+                  return null;
+                }
+              });
           }
-        })
+        });
+
+      uploadTask
         .addOnProgressListener(new OnProgressListener<UploadTask.TaskSnapshot>() {
           @Override
           public void onProgress(UploadTask.TaskSnapshot taskSnapshot) {
@@ -476,12 +500,12 @@ public class RNFirebaseStorage extends ReactContextBaseJavaModule {
    * @param taskSnapshot
    * @return
    */
-  private WritableMap getUploadTaskAsMap(UploadTask.TaskSnapshot taskSnapshot) {
+  private WritableMap getUploadTaskAsMap(UploadTask.TaskSnapshot taskSnapshot, String downloadURL) {
     WritableMap resp = Arguments.createMap();
 
     if (taskSnapshot != null) {
       resp.putDouble("bytesTransferred", taskSnapshot.getBytesTransferred());
-      resp.putString("downloadURL", taskSnapshot.getDownloadUrl() != null ? taskSnapshot.getDownloadUrl().toString() : null);
+      resp.putString("downloadURL", downloadURL);
 
       StorageMetadata d = taskSnapshot.getMetadata();
       if (d != null) {
@@ -518,17 +542,6 @@ public class RNFirebaseStorage extends ReactContextBaseJavaModule {
     metadata.putString("contentEncoding", storageMetadata.getContentEncoding());
     metadata.putString("contentLanguage", storageMetadata.getContentLanguage());
     metadata.putString("contentType", storageMetadata.getContentType());
-
-    WritableArray downloadURLs = Arguments.createArray();
-    List<Uri> _downloadURLS = storageMetadata.getDownloadUrls();
-
-    if (_downloadURLS != null) {
-      for (Uri uri : _downloadURLS) {
-        downloadURLs.pushString(uri.getPath());
-      }
-    }
-
-    metadata.putArray("downloadURLs", downloadURLs);
 
     WritableMap customMetadata = Arguments.createMap();
     for (String key : storageMetadata.getCustomMetadataKeys()) {
