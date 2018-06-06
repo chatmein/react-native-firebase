@@ -24,8 +24,6 @@ example/demo/ios/demo.xcworkspace/
 # Crashlytics configuations
 android/com_crashlytics_export_strings.xml
 
-# Signing files
-android/.signing/
 
 # Local configuration file (sdk path, etc)
 **/android/local.properties
@@ -84,8 +82,6 @@ local.properties
 
 **/ios/Pods/**
 **/ios/ReactNativeFirebaseDemo.xcworkspace/
-dist
-version.js
 .nyc_output
 ios.coverage.json
 tests/ios/Fabric.framework/Fabric
