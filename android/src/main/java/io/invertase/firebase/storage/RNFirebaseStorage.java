@@ -338,55 +338,7 @@ public class RNFirebaseStorage extends ReactContextBaseJavaModule {
     try {
       Uri file = getURI(localPath);
       StorageMetadata md = buildMetadataFromMap(metadata);
-      UploadTask uploadTask = reference.putFile(file, md);
-
-      // register observers to listen for when the download is done or if it fails
-      uploadTask
-        .continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
-          @Override
-          public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> taskSnapshot) throws Exception {
-            // Forward any exceptions
-            if (!taskSnapshot.isSuccessful()) {
-              Exception exception = taskSnapshot.getException();
-              Log.e(TAG, "putFile failure " + exception.getMessage());
-              // TODO sendJS error event
-              throw exception;
-            }
-
-            Log.d(TAG, "uploadFromUri: upload success");
-
-            final UploadTask.TaskSnapshot snapshot = taskSnapshot.getResult();
-
-            // Request the public download URL
-            return reference.getDownloadUrl()
-              .continueWithTask(new Continuation<Uri, Task<Uri>>() {
-                @Override
-                public Task<Uri> then(@NonNull Task<Uri> task) throws Exception {
-
-                  if (!task.isSuccessful()) {
-                    Exception exception = task.getException();
-                    Log.e(TAG, "putFile failure " + exception.getMessage());
-                    throw exception;
-                  }
-
-                  Log.d(TAG, "putFile success " + snapshot);
-                  String downloadUrl = task.getResult().toString();
-
-                  WritableMap respChanged = getUploadTaskAsMap(snapshot, downloadUrl);
-                  sendJSEvent(appName, STORAGE_STATE_CHANGED, path, respChanged);
-
-                  // to avoid readable map already consumed errors
-                  WritableMap respSuccess = getUploadTaskAsMap(snapshot, downloadUrl);
-                  sendJSEvent(appName, STORAGE_UPLOAD_SUCCESS, path, respSuccess);
-
-                  WritableMap resp = getUploadTaskAsMap(snapshot, downloadUrl);
-                  promise.resolve(resp);
-
-                  return null;
-                }
-              });
-          }
-        });
+      final UploadTask uploadTask = reference.putFile(file, md);
 
       uploadTask
         .addOnProgressListener(new OnProgressListener<UploadTask.TaskSnapshot>() {
@@ -404,6 +356,64 @@ public class RNFirebaseStorage extends ReactContextBaseJavaModule {
             sendJSEvent(appName, STORAGE_STATE_CHANGED, path, event);
           }
         });
+
+      // register observers to listen for when the download is done or if it fails
+      Task<Uri> urlTask = uploadTask
+        .continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
+          @Override
+          public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> taskSnapshot) throws Exception {
+            // Forward any exceptions
+            if (!taskSnapshot.isSuccessful()) {
+              Exception exception = taskSnapshot.getException();
+              Log.e(TAG, "putFile failure " + exception.getMessage());
+              // Falls through to next task
+              throw exception;
+            }
+
+            Log.d(TAG, "uploadFromUri: upload success");
+
+            final UploadTask.TaskSnapshot snapshot = taskSnapshot.getResult();
+
+            // Request the public download URL
+            return reference.getDownloadUrl();
+          }
+        });
+
+      urlTask.continueWith(new Continuation<Uri, Void>() {
+        @Override
+        public Void then(@NonNull Task<Uri> task) throws Exception {
+          if (!task.isSuccessful()) {
+            Exception exception = task.getException();
+            Log.e(TAG, "putFile failure " + exception.getMessage());
+            // Falls through to onFailureListener
+            throw exception;
+          }
+
+          UploadTask.TaskSnapshot snapshot = uploadTask.getResult();
+
+          Log.d(TAG, "putFile success " + snapshot);
+          String downloadUrl = task.getResult().toString();
+
+          WritableMap respChanged = getUploadTaskAsMap(snapshot, downloadUrl);
+          sendJSEvent(appName, STORAGE_STATE_CHANGED, path, respChanged);
+
+          // to avoid readable map already consumed errors
+          WritableMap respSuccess = getUploadTaskAsMap(snapshot, downloadUrl);
+          sendJSEvent(appName, STORAGE_UPLOAD_SUCCESS, path, respSuccess);
+
+          WritableMap resp = getUploadTaskAsMap(snapshot, downloadUrl);
+          promise.resolve(resp);
+
+          return null;
+        }
+      })
+      .addOnFailureListener(new OnFailureListener() {
+        @Override
+        public void onFailure(@NonNull Exception e) {
+          promiseRejectStorageException(promise, e);
+        }
+      });
+
     } catch (Exception exception) {
       promiseRejectStorageException(promise, exception);
     }
